@@ -8,6 +8,15 @@ const nextConfig = {
       },
     ],
   },
+  // next.config.js
+
+  experimental: {
+    turbo: false, // ❌ turn off Turbopack
+  },
+
+
+
+
 
   experimental: {
     serverActions: {
