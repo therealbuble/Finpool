@@ -1,11 +1,149 @@
 export const dynamic = "force-dynamic";
 
-// ✅ Imports
-import { convertCurrency } from "@/lib/utils/convertCurrency";
-import { getMetalsPrices } from "@/lib/scrapers/getMetals";
-import { getPSXData } from "@/lib/scrapers/getPSX";
-import ZameenScraper from "@/lib/scrapers/getZameen";
-import metalsScraper from "@/lib/scrapers/metalsScraper"; // Enhanced scraper
+// ✅ Imports - Only external scrapers
+import { getMetalsData } from "@/lib/scrapers/getMetals";
+import ZameenScraper, { extractSearchQuery, extractAreaName } from "@/lib/scrapers/getZameen"; // 🆕 Import helper functions
+import PSXScraper from "@/lib/scrapers/getPSX"; // 🆕 New PSX import
+
+// Fallback metals data with multi-unit conversion
+const getFallbackMetalsData = () => {
+  const conversionRates = {
+    TROY_OZ_TO_GRAMS: 31.1035,
+    TOLA_TO_GRAMS: 11.664
+  };
+
+  const baseMetals = [
+    { name: 'Gold', symbol: 'AU', price: 2658.50, high: 2672.30, low: 2645.10, change: -8.15, changePercent: -0.31, unit: 'per oz' },
+    { name: 'Silver', symbol: 'AG', price: 30.245, high: 30.68, low: 30.12, change: -0.186, changePercent: -0.61, unit: 'per oz' },
+    { name: 'Platinum', symbol: 'PT', price: 982.00, high: 1004.90, low: 968.65, change: -9.30, changePercent: -0.67, unit: 'per oz' },
+    { name: 'Palladium', symbol: 'PD', price: 927.00, high: 945.50, low: 903.00, change: 5.30, changePercent: 0.47, unit: 'per oz' },
+    { name: 'Copper', symbol: 'CU', price: 9649.30, high: 9767.40, low: 9578.92, change: -153.70, changePercent: -1.57, unit: 'per MT' }
+  ];
+
+  return baseMetals.map(metal => {
+    // Only convert precious metals (quoted per ounce)
+    if (metal.unit === 'per oz') {
+      const pricePerGram = metal.price / conversionRates.TROY_OZ_TO_GRAMS;
+      const pricePerTola = pricePerGram * conversionRates.TOLA_TO_GRAMS;
+      const pricePerKg = pricePerGram * 1000;
+      
+      return {
+        ...metal,
+        multiUnit: {
+          ounce: {
+            price: metal.price,
+            high: metal.high,
+            low: metal.low,
+            unit: 'per troy oz'
+          },
+          gram: {
+            price: pricePerGram,
+            high: metal.high / conversionRates.TROY_OZ_TO_GRAMS,
+            low: metal.low / conversionRates.TROY_OZ_TO_GRAMS,
+            unit: 'per gram'
+          },
+          tola: {
+            price: pricePerTola,
+            high: (metal.high / conversionRates.TROY_OZ_TO_GRAMS) * conversionRates.TOLA_TO_GRAMS,
+            low: (metal.low / conversionRates.TROY_OZ_TO_GRAMS) * conversionRates.TOLA_TO_GRAMS,
+            unit: 'per tola'
+          },
+          kilogram: {
+            price: pricePerKg,
+            high: (metal.high / conversionRates.TROY_OZ_TO_GRAMS) * 1000,
+            low: (metal.low / conversionRates.TROY_OZ_TO_GRAMS) * 1000,
+            unit: 'per kg'
+          }
+        }
+      };
+    }
+    return metal;
+  });
+};
+
+// 🆕 Fallback PSX data (using PSX scraper structure)
+const getFallbackPSXData = () => {
+  const psxScraper = new PSXScraper();
+  return psxScraper.getFallbackData();
+};
+
+// Format metals data for chatbot display
+const formatMetalsData = (metals) => {
+  if (!metals || metals.length === 0) {
+    return "⚠️ Metals data temporarily unavailable. Please try again later.";
+  }
+
+  let formatted = "";
+  
+  // Show precious metals first with multi-unit support
+  const preciousMetals = metals.filter(m => 
+    ['gold', 'silver', 'platinum', 'palladium'].some(precious => 
+      m.name.toLowerCase().includes(precious)
+    )
+  );
+  
+  const industrialMetals = metals.filter(m => 
+    !['gold', 'silver', 'platinum', 'palladium'].some(precious => 
+      m.name.toLowerCase().includes(precious)
+    )
+  );
+  
+  // Format precious metals
+  preciousMetals.forEach(metal => {
+    const changeIcon = metal.change >= 0 ? "🟢" : "🔴";
+    const changeSign = metal.change >= 0 ? "+" : "";
+    
+    if (metal.name.toLowerCase().includes('gold')) {
+      formatted += `🥇 **Gold (AU)**\n`;
+      if (metal.multiUnit) {
+        formatted += `   💰 $${metal.multiUnit.ounce.price.toFixed(2)}/oz • $${metal.multiUnit.gram.price.toFixed(2)}/g • $${metal.multiUnit.tola.price.toFixed(2)}/tola\n`;
+      } else {
+        formatted += `   💰 $${metal.price.toFixed(2)} per oz\n`;
+      }
+      formatted += `   ${changeIcon} ${changeSign}$${Math.abs(metal.change).toFixed(2)} (${metal.changePercent > 0 ? '+' : ''}${metal.changePercent.toFixed(2)}%)\n\n`;
+    } 
+    else if (metal.name.toLowerCase().includes('silver')) {
+      formatted += `🥈 **Silver (AG)**\n`;
+      if (metal.multiUnit) {
+        formatted += `   💰 $${metal.multiUnit.ounce.price.toFixed(3)}/oz • $${metal.multiUnit.gram.price.toFixed(3)}/g • $${metal.multiUnit.tola.price.toFixed(2)}/tola\n`;
+      } else {
+        formatted += `   💰 $${metal.price.toFixed(3)} per oz\n`;
+      }
+      formatted += `   ${changeIcon} ${changeSign}$${Math.abs(metal.change).toFixed(3)} (${metal.changePercent > 0 ? '+' : ''}${metal.changePercent.toFixed(2)}%)\n\n`;
+    }
+    else if (metal.name.toLowerCase().includes('platinum')) {
+      formatted += `⚪ **Platinum (PT)** - $${metal.price.toFixed(2)} per oz\n`;
+      formatted += `   ${changeIcon} ${changeSign}$${Math.abs(metal.change).toFixed(2)} (${metal.changePercent > 0 ? '+' : ''}${metal.changePercent.toFixed(2)}%)\n\n`;
+    }
+    else if (metal.name.toLowerCase().includes('palladium')) {
+      formatted += `💎 **Palladium (PD)** - $${metal.price.toFixed(2)} per oz\n`;
+      formatted += `   ${changeIcon} ${changeSign}$${Math.abs(metal.change).toFixed(2)} (${metal.changePercent > 0 ? '+' : ''}${metal.changePercent.toFixed(2)}%)\n\n`;
+    }
+  });
+  
+  // Format industrial metals (show first 3)
+  industrialMetals.slice(0, 3).forEach(metal => {
+    const changeIcon = metal.change >= 0 ? "🟢" : "🔴";
+    const changeSign = metal.change >= 0 ? "+" : "";
+    
+    formatted += `🔩 **${metal.name} (${metal.symbol})** - ${metal.price.toLocaleString()} ${metal.unit}\n`;
+    formatted += `   ${changeIcon} ${changeSign}${Math.abs(metal.change).toLocaleString()} (${metal.changePercent > 0 ? '+' : ''}${metal.changePercent.toFixed(2)}%)\n\n`;
+  });
+  
+  formatted += `📊 *Live metals data*\n`;
+  formatted += `🕒 *Last updated: ${new Date().toLocaleString('en-US', { 
+    timeZone: 'Asia/Karachi',
+    month: 'short',
+    day: 'numeric', 
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  })} PKT*\n`;
+  formatted += `💡 *Ask about specific metals for detailed unit breakdowns*`;
+  
+  return formatted;
+};
 
 export async function POST(req) {
   try {
@@ -15,7 +153,7 @@ export async function POST(req) {
       return Response.json({ error: "Message is required" }, { status: 400 });
     }
 
-    // 👉 1️⃣ Build user context (unchanged)
+    // 👉 1️⃣ Build user context
     let userContextInfo = "";
     if (userContext?.accounts && userContext?.transactions) {
       const { accounts, transactions } = userContext;
@@ -53,108 +191,145 @@ USER FINANCIAL CONTEXT:
 `;
     }
 
-    // 👉 2️⃣ Enhanced real-time data logic
+    // 👉 2️⃣ Real-time data logic - Better error handling
     let realTimeContext = "";
     const lowerMessage = message.toLowerCase();
 
-    // 💰 Currency switch check
-    const wantsCurrency = lowerMessage.includes("in pkr") || lowerMessage.includes("in aed");
-    let targetCurrency = "USD";
-    if (lowerMessage.includes("in pkr")) targetCurrency = "PKR";
-    else if (lowerMessage.includes("in aed")) targetCurrency = "AED";
-
-    // 🧠 Enhanced Metals Data with fallback
-    const metalsKeywords = ["gold", "silver", "metal", "platinum", "palladium", "copper", "aluminum", "nickel", "lead", "zinc", "tin"];
-    const metalsQuery = metalsKeywords.some(word => lowerMessage.includes(word));
-
-    if (metalsQuery || wantsCurrency) {
-      let metals = {};
-      let dataSource = "";
-      
-      try {
-        // 🚀 Try enhanced scraper first
-        await metalsScraper.ensureFreshData();
-        const scrapedData = metalsScraper.getData();
-        
-        if (scrapedData && scrapedData.metals && scrapedData.metals.length > 0) {
-          // Convert scraped data to expected format
-          scrapedData.metals.forEach(metal => {
-            metals[metal.name] = metal.last.toFixed(2);
-          });
-          dataSource = "Enhanced Live Data";
-          
-          realTimeContext += `📈 METALS PRICES (${targetCurrency}) - ${dataSource}:\n`;
-          realTimeContext += `🕒 Last Updated: ${new Date(scrapedData.lastUpdate).toLocaleTimeString()}\n`;
-          realTimeContext += `⏱️ Data Age: ${metalsScraper.getDataAge()} minutes\n\n`;
-
-        } else {
-          throw new Error("No data from enhanced scraper");
-        }
-      } catch (error) {
-        console.warn("Enhanced scraper failed, falling back to original:", error.message);
-        
-        // 🔄 Fallback to original scraper
-        try {
-          metals = await getMetalsPrices();
-          dataSource = "Fallback Data";
-          realTimeContext += `📈 METALS PRICES (${targetCurrency}) - ${dataSource}:\n`;
-        } catch (fallbackError) {
-          console.error("Both scrapers failed:", fallbackError.message);
-          realTimeContext += `⚠️ METALS DATA TEMPORARILY UNAVAILABLE\n`;
-          metals = {};
-        }
-      }
-
-      // Process and display metals data
-      for (const [metal, priceText] of Object.entries(metals)) {
-        const price = parseFloat(priceText.toString().replace(/,/g, ""));
-        if (!isNaN(price) && price > 0) {
-          let displayPrice = `USD ${price.toLocaleString()}`;
-          
-          if (targetCurrency !== "USD") {
-            try {
-              const converted = await convertCurrency(price, "USD", targetCurrency);
-              if (converted) {
-                displayPrice = `${targetCurrency} ${converted.toLocaleString()}`;
-              }
-            } catch (conversionError) {
-              console.warn(`Currency conversion failed for ${metal}:`, conversionError.message);
-              displayPrice += ` (${targetCurrency} conversion unavailable)`;
-            }
-          }
-          realTimeContext += `- ${metal}: ${displayPrice}\n`;
-        }
-      }
-
-      if (Object.keys(metals).length > 0) {
-        realTimeContext += `\n💱 Want prices in another currency (PKR, AED)? Just say: "Show in PKR" or "AED".\n`;
-        realTimeContext += `🔄 Auto-updates every 30 minutes for accuracy.\n`;
-      }
-    }
-
-    // 📊 PSX (unchanged)
+    // 🆕 PSX DATA - Pakistan Stock Exchange
     if (
       lowerMessage.includes("psx") ||
+      lowerMessage.includes("stock") ||
+      lowerMessage.includes("shares") ||
       lowerMessage.includes("kse") ||
-      lowerMessage.includes("stocks")
+      lowerMessage.includes("kse-100") ||
+      lowerMessage.includes("karachi stock") ||
+      lowerMessage.includes("pakistan stock") ||
+      lowerMessage.includes("equity") ||
+      lowerMessage.includes("market") ||
+      lowerMessage.includes("index") ||
+      lowerMessage.includes("gainers") ||
+      lowerMessage.includes("losers") ||
+      lowerMessage.includes("volume") ||
+      lowerMessage.includes("trading")
     ) {
+      let psxData;
+      let dataSource = "live data";
+
       try {
-        const psx = await getPSXData();
-        realTimeContext += `
-📊 PAKISTAN STOCK EXCHANGE:
-- KSE-100 Index: ${psx.kse100}
-- Change: ${psx.change}
-`;
+        console.log("🔄 Attempting to fetch live PSX data...");
+        
+        // Initialize PSX scraper and get data
+        const psxScraper = new PSXScraper();
+        const psxPromise = psxScraper.scrapeAllData();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('PSX fetch timeout')), 10000)
+        );
+        
+        const psxResult = await Promise.race([psxPromise, timeoutPromise]);
+        
+        if (psxResult && (psxResult.kse100 || psxResult.companies)) {
+          psxData = psxResult;
+          console.log("✅ Successfully fetched live PSX data");
+        } else {
+          throw new Error('Invalid PSX data structure');
+        }
+        
       } catch (error) {
-        console.error("PSX data fetch failed:", error.message);
+        console.error("❌ Live PSX fetch failed:", error.message);
+        console.log("🔄 Using fallback PSX data...");
+        
+        psxData = getFallbackPSXData();
+        dataSource = "cached data";
+      }
+
+      try {
+        // Use the formatForChatbot method from PSX scraper
+        const psxScraper = new PSXScraper();
+        const formattedData = psxScraper.formatForChatbot(psxData);
         realTimeContext += `
-📊 PAKISTAN STOCK EXCHANGE:
-⚠️ Stock market data temporarily unavailable.
+📈 PAKISTAN STOCK EXCHANGE (PSX):
+${formattedData}
+`;
+        
+        if (dataSource === "cached data") {
+          realTimeContext += `\n⚠️ *Using cached data - live PSX data temporarily unavailable*`;
+        }
+        
+      } catch (formatError) {
+        console.error("❌ PSX formatting failed:", formatError.message);
+        realTimeContext += `
+📈 PAKISTAN STOCK EXCHANGE (PSX):
+⚠️ PSX data temporarily unavailable. Please try again later.
 `;
       }
     }
 
-    // 🏠 Zameen Property Data (unchanged)
+    // 🥇 METALS DATA with improved error handling
+    if (
+      lowerMessage.includes("metal") ||
+      lowerMessage.includes("gold") ||
+      lowerMessage.includes("silver") ||
+      lowerMessage.includes("copper") ||
+      lowerMessage.includes("platinum") ||
+      lowerMessage.includes("palladium") ||
+      lowerMessage.includes("aluminium") ||
+      lowerMessage.includes("aluminum") ||
+      lowerMessage.includes("commodities") ||
+      lowerMessage.includes("tola") ||
+      lowerMessage.includes("gram") ||
+      lowerMessage.includes("ounce") ||
+      lowerMessage.includes("kilogram")
+    ) {
+      let metalsData;
+      let dataSource = "live data";
+
+      try {
+        console.log("🔄 Attempting to fetch live metals data...");
+        
+        // Try to get live data with timeout
+        const metalsPromise = getMetalsData();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Metals fetch timeout')), 10000)
+        );
+        
+        const metalsResult = await Promise.race([metalsPromise, timeoutPromise]);
+        
+        if (metalsResult && Array.isArray(metalsResult) && metalsResult.length > 0) {
+          metalsData = metalsResult;
+          console.log(`✅ Successfully fetched ${metalsData.length} live metals`);
+        } else {
+          throw new Error('Invalid metals data structure');
+        }
+        
+      } catch (error) {
+        console.error("❌ Live metals fetch failed:", error.message);
+        console.log("🔄 Using fallback metals data...");
+        
+        metalsData = getFallbackMetalsData();
+        dataSource = "cached data";
+      }
+
+      try {
+        const formattedData = formatMetalsData(metalsData);
+        realTimeContext += `
+🥇 METALS & COMMODITIES:
+${formattedData}
+`;
+        
+        if (dataSource === "cached data") {
+          realTimeContext += `\n⚠️ *Using cached data - live data temporarily unavailable*`;
+        }
+        
+      } catch (formatError) {
+        console.error("❌ Metals formatting failed:", formatError.message);
+        realTimeContext += `
+🥇 METALS & COMMODITIES:
+⚠️ Metals data temporarily unavailable. Please try again later.
+`;
+      }
+    }
+
+    // 🏠 ENHANCED Zameen Property Data with Links
     if (
       lowerMessage.includes("zameen") ||
       lowerMessage.includes("property") ||
@@ -162,144 +337,160 @@ USER FINANCIAL CONTEXT:
       lowerMessage.includes("house") ||
       lowerMessage.includes("plot") ||
       lowerMessage.includes("apartment") ||
-      lowerMessage.includes("flat")
+      lowerMessage.includes("flat") ||
+      lowerMessage.includes("marla") ||
+      lowerMessage.includes("kanal")
     ) {
       try {
+        console.log("🔄 Attempting to fetch Zameen property data...");
         const zameen = new ZameenScraper();
         let propertyData = "";
 
-        // Detect what type of property query this is
+        // Determine query type with better detection
         const isSearch = lowerMessage.includes("search") || 
                         lowerMessage.includes("find") || 
                         lowerMessage.includes("looking for") ||
                         lowerMessage.includes("buy") ||
-                        lowerMessage.includes("rent");
+                        lowerMessage.includes("rent") ||
+                        lowerMessage.includes("show me");
 
         const isPriceQuery = lowerMessage.includes("price") || 
                             lowerMessage.includes("cost") || 
                             lowerMessage.includes("index") ||
-                            lowerMessage.includes("trend");
+                            lowerMessage.includes("trend") ||
+                            lowerMessage.includes("market overview");
 
-        const isAreaQuery = lowerMessage.includes("area") || 
-                           lowerMessage.includes("location") ||
-                           lowerMessage.includes("guide");
+        const isAreaQuery = lowerMessage.includes("area guide") || 
+                           lowerMessage.includes("location guide") ||
+                           lowerMessage.includes("about") ||
+                           (lowerMessage.includes("area") && (lowerMessage.includes("info") || lowerMessage.includes("guide")));
 
-        // Extract city from message (default to lahore)
-        let city = "lahore";
+        // Enhanced city detection
+        let city = "lahore"; // default
         if (lowerMessage.includes("karachi")) city = "karachi";
         else if (lowerMessage.includes("islamabad")) city = "islamabad";
         else if (lowerMessage.includes("rawalpindi")) city = "rawalpindi";
         else if (lowerMessage.includes("peshawar")) city = "peshawar";
         else if (lowerMessage.includes("multan")) city = "multan";
         else if (lowerMessage.includes("faisalabad")) city = "faisalabad";
+        else if (lowerMessage.includes("quetta")) city = "quetta";
+        else if (lowerMessage.includes("gujranwala")) city = "gujranwala";
+
+        // Add timeout to Zameen requests
+        const ZAMEEN_TIMEOUT = 15000; // 15 seconds
 
         if (isPriceQuery) {
-          const indexResult = await zameen.scrapePropertyIndex(city, 'houses');
-          if (indexResult.success) {
-            propertyData = zameen.formatForChatbot(indexResult.data, 'index');
-          } else {
-            propertyData = "⚠️ Unable to fetch property price index at the moment.";
-          }
-        } else if (isSearch) {
-          const searchQuery = extractSearchQuery(message);
-          const searchResult = await zameen.searchProperties(searchQuery, city, 'buy');
-          if (searchResult.success) {
-            propertyData = zameen.formatForChatbot(searchResult.data, 'search');
-          } else {
-            propertyData = "⚠️ Unable to search properties at the moment.";
-          }
-        } else if (isAreaQuery) {
-          const areaName = extractAreaName(message);
-          const areaResult = await zameen.getAreaGuide(areaName, city);
-          if (areaResult.success) {
-            propertyData = `🏘️ **${areaResult.data.name} Area Guide**\n\n`;
-            propertyData += `📍 **Location:** ${areaResult.data.city}\n`;
-            propertyData += `💰 **Average Price:** ${areaResult.data.averagePrice}\n`;
-            propertyData += `📝 **Overview:** ${areaResult.data.overview.substring(0, 200)}...\n`;
-            if (areaResult.data.amenities.length > 0) {
-              propertyData += `🏪 **Amenities:** ${areaResult.data.amenities.slice(0, 5).join(", ")}\n`;
+          console.log(`🏠 Fetching property index for ${city}...`);
+          
+          const indexPromise = zameen.scrapePropertyIndex(city, 'houses');
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Zameen index timeout')), ZAMEEN_TIMEOUT)
+          );
+          
+          try {
+            const indexResult = await Promise.race([indexPromise, timeoutPromise]);
+            if (indexResult.success) {
+              propertyData = zameen.formatForChatbot(indexResult.data, 'index');
+              console.log("✅ Successfully fetched property index");
+            } else {
+              throw new Error('Invalid property index data');
             }
-          } else {
-            propertyData = "⚠️ Unable to fetch area guide at the moment.";
+          } catch (timeoutError) {
+            console.error("❌ Property index fetch failed:", timeoutError.message);
+            propertyData = `⚠️ Unable to fetch live property data for ${city.charAt(0).toUpperCase() + city.slice(1)}. Using fallback data.\n\n`;
+            propertyData += zameen.formatForChatbot(zameen.getFallbackPropertyData(city), 'index');
           }
+          
+        } else if (isSearch) {
+          console.log(`🔍 Searching properties in ${city}...`);
+          
+          const searchQuery = extractSearchQuery(message);
+          console.log(`🔍 Search query: "${searchQuery}"`);
+          
+          const searchPromise = zameen.searchProperties(searchQuery, city, 'buy');
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Zameen search timeout')), ZAMEEN_TIMEOUT)
+          );
+          
+          try {
+            const searchResult = await Promise.race([searchPromise, timeoutPromise]);
+            if (searchResult.success) {
+              propertyData = zameen.formatForChatbot(searchResult.data, 'search');
+              console.log(`✅ Successfully searched properties: ${searchResult.data.totalFound} found`);
+            } else {
+              throw new Error('Invalid search results');
+            }
+          } catch (timeoutError) {
+            console.error("❌ Property search failed:", timeoutError.message);
+            propertyData = `⚠️ Unable to search live properties for "${searchQuery}" in ${city.charAt(0).toUpperCase() + city.slice(1)}. Using sample data.\n\n`;
+            propertyData += zameen.formatForChatbot(zameen.getFallbackSearchResults(searchQuery), 'search');
+          }
+          
+        } else if (isAreaQuery) {
+          console.log(`🏘️ Fetching area guide...`);
+          
+          const areaName = extractAreaName(message);
+          console.log(`🏘️ Area: "${areaName}"`);
+          
+          const areaPromise = zameen.getAreaGuide(areaName, city);
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Zameen area guide timeout')), ZAMEEN_TIMEOUT)
+          );
+          
+          try {
+            const areaResult = await Promise.race([areaPromise, timeoutPromise]);
+            if (areaResult.success) {
+              propertyData = zameen.formatForChatbot(areaResult.data, 'area');
+              console.log("✅ Successfully fetched area guide");
+            } else {
+              throw new Error('Invalid area guide data');
+            }
+          } catch (timeoutError) {
+            console.error("❌ Area guide fetch failed:", timeoutError.message);
+            propertyData = `⚠️ Unable to fetch live area guide for ${areaName} in ${city.charAt(0).toUpperCase() + city.slice(1)}. Using fallback data.\n\n`;
+            propertyData += zameen.formatForChatbot(zameen.getFallbackAreaGuide(areaName, city), 'area');
+          }
+          
         } else {
-          const indexResult = await zameen.scrapePropertyIndex(city, 'houses');
-          if (indexResult.success) {
-            propertyData = zameen.formatForChatbot(indexResult.data, 'index');
-          } else {
-            propertyData = "⚠️ Unable to fetch property data at the moment.";
+          // Default: Show property index
+          console.log(`🏠 Fetching default property data for ${city}...`);
+          
+          const indexPromise = zameen.scrapePropertyIndex(city, 'houses');
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Zameen default timeout')), ZAMEEN_TIMEOUT)
+          );
+          
+          try {
+            const indexResult = await Promise.race([indexPromise, timeoutPromise]);
+            if (indexResult.success) {
+              propertyData = zameen.formatForChatbot(indexResult.data, 'index');
+              console.log("✅ Successfully fetched default property data");
+            } else {
+              throw new Error('Invalid default property data');
+            }
+          } catch (timeoutError) {
+            console.error("❌ Default property fetch failed:", timeoutError.message);
+            propertyData = `⚠️ Unable to fetch live property data for ${city.charAt(0).toUpperCase() + city.slice(1)}. Using fallback data.\n\n`;
+            propertyData += zameen.formatForChatbot(zameen.getFallbackPropertyData(city), 'index');
           }
         }
 
         realTimeContext += `
-🏠 PROPERTY DATA:
+🏠 PROPERTY DATA (ZAMEEN.COM):
 ${propertyData}
 `;
 
       } catch (error) {
-        console.error("Zameen scraping error:", error);
+        console.error("❌ Critical Zameen scraping error:", error);
         realTimeContext += `
 🏠 PROPERTY DATA:
 ⚠️ Property data temporarily unavailable. Please try again later.
+🔧 *If this persists, check your internet connection or try again in a few minutes.*
 `;
       }
     }
 
-    // ✅ Enhanced "Tola Gold" handling with better error handling
-    if (lowerMessage.includes("tola") && lowerMessage.includes("gold")) {
-      try {
-        let goldPrice = 0;
-        let dataSource = "";
-
-        // Try enhanced scraper first
-        try {
-          await metalsScraper.ensureFreshData();
-          const goldData = metalsScraper.getMetal('XAU') || metalsScraper.getMetal('Gold');
-          if (goldData && goldData.last > 0) {
-            goldPrice = goldData.last;
-            dataSource = "Enhanced Live Data";
-          } else {
-            throw new Error("No gold data from enhanced scraper");
-          }
-        } catch (error) {
-          // Fallback to original scraper
-          const metals = await getMetalsPrices();
-          const goldPriceText = metals["Gold"];
-          goldPrice = parseFloat(goldPriceText?.replace(/,/g, "") || "0");
-          dataSource = "Fallback Data";
-        }
-
-        if (goldPrice > 0) {
-          const tolaInGrams = 11.6638;
-          const ounceInGrams = 28.3495;
-          const usdToPkrRate = await convertCurrency(1, "USD", "PKR");
-
-          if (usdToPkrRate) {
-            const priceInPKR = ((goldPrice / ounceInGrams) * tolaInGrams) * usdToPkrRate;
-
-            return Response.json({
-              reply: `🇵🇰 1 Tola Gold Price in PKR (${dataSource}):
-- Gold Price (USD/oz): $${goldPrice.toLocaleString()}
-- USD to PKR: ${usdToPkrRate.toFixed(2)}
-- 1 Tola ≈ ${priceInPKR.toLocaleString(undefined, { maximumFractionDigits: 2 })} PKR
-
-📊 Data automatically updates every 30 minutes for accuracy.`
-            });
-          } else {
-            throw new Error("Currency conversion failed");
-          }
-        } else {
-          throw new Error("Invalid gold price");
-        }
-      } catch (error) {
-        console.error("Tola gold calculation error:", error.message);
-        return Response.json({
-          reply: `⚠️ Couldn't fetch live gold price or convert currency. Please try again later.`
-        });
-      }
-    }
-
-    // 👉 3️⃣ Enhanced system prompt
+    // 👉 3️⃣ Enhanced system prompt with property link guidance
     const systemPrompt = `
 You are FinGuy, a helpful financial assistant with access to real-time financial data.
 You provide advice and answers related to ALL financial and investment topics.
@@ -309,8 +500,15 @@ ALWAYS follow these rules:
 - When someone says "it" or "that", refer back to previous messages.
 - If real-time data is provided, use it instead of old info.
 - If no real-time context is provided, say so.
+- For PSX/stock queries, use the provided real-time PSX data.
 - For property queries, use the provided real-time Zameen data.
-- Metals data is auto-updated every 30 minutes for maximum accuracy.
+- For metals/commodities queries, use the provided real-time metals data.
+- For metals queries, provide unit conversions (ounce/gram/tola/kg) when relevant.
+- Explain that 1 tola = 11.664 grams for Pakistani users.
+- For gold/silver prices, always show multiple units when asked.
+- PROPERTY RESPONSES: Show property listings naturally and concisely. Don't mention "sample data", "estimates", or "cached data" - just present the properties cleanly.
+- SIMPLE FORMAT: When showing properties, use a clean format without excessive explanations. Add a single Zameen.com link at the end.
+- NATURAL TONE: Act like you found real properties. No need to explain data sources or limitations unless specifically asked.
 
 REAL-TIME CONTEXT:
 ${realTimeContext || "No real-time data available for this query."}
@@ -319,15 +517,17 @@ ${userContextInfo}
 
 TOPICS YOU HANDLE:
 - Personal finance, budgeting, investing
-- Stocks, commodities (gold, silver, oil)
-- Forex, crypto, real estate, tax
+- Pakistan Stock Exchange (PSX), KSE-100 index, stocks, shares trading
+- Stocks, commodities (metals with unit conversions), forex, crypto, real estate, tax
 - Debt, retirement, insurance, business finance
 - Economic news, trading strategies
-- Pakistan property market and real estate
-- Live metals pricing with automatic updates
+- Pakistan property market and real estate with direct Zameen.com links
+- Live metals prices (Gold, Silver, Copper, Platinum, etc.) in multiple units
+- Pakistani market context (tola is common in Pakistan, PSX for stocks)
+- 🆕 Property verification through official Zameen.com listings with clickable links
 `;
 
-    // 👉 4️⃣ Build Gemini payload (unchanged)
+    // 👉 4️⃣ Build Gemini payload
     const contents = [];
 
     contents.push({
@@ -339,7 +539,7 @@ TOPICS YOU HANDLE:
       role: "model",
       parts: [
         {
-          text: "I understand. I'm FinGuy, your financial assistant with access to live data. I will always keep context and use real-time data when available, including enhanced metals pricing and property data."
+          text: "I understand. I'm FinGuy, your financial assistant with access to live data including PSX stock market data, metals prices in multiple units, and Pakistani property data. I present property listings naturally without unnecessary disclaimers, and I keep responses concise and helpful."
         }
       ]
     });
@@ -413,263 +613,3 @@ TOPICS YOU HANDLE:
     return Response.json({ reply: "⚠️ Technical issue. Try again shortly." }, { status: 200 });
   }
 }
-
-// Helper functions (unchanged)
-function extractSearchQuery(message) {
-  const lowerMessage = message.toLowerCase();
-  
-  const filterWords = ['find', 'search', 'looking', 'for', 'buy', 'rent', 'property', 'house', 'plot', 'apartment', 'flat', 'in', 'at'];
-  
-  const words = message.split(' ').filter(word => {
-    const lowerWord = word.toLowerCase();
-    return !filterWords.includes(lowerWord) && word.length > 2;
-  });
-  
-  return words.slice(0, 3).join(' ') || 'DHA';
-}
-
-function extractAreaName(message) {
-  const lowerMessage = message.toLowerCase();
-  
-  const filterWords = ['area', 'guide', 'location', 'about', 'tell', 'me', 'info', 'information', 'in', 'at'];
-  
-  const words = message.split(' ').filter(word => {
-    const lowerWord = word.toLowerCase();
-    return !filterWords.includes(lowerWord) && word.length > 2;
-  });
-  
-  return words[0] || 'DHA';
-}
-
-// ---
-
-// /lib/scrapers/metalsScraper.js - Put this in your lib/scrapers directory
-import axios from 'axios';
-import * as cheerio from 'cheerio';
-
-class MetalsScraper {
-  constructor() {
-    this.data = null;
-    this.lastUpdate = null;
-    this.isRunning = false;
-    this.updateInterval = null;
-    this.baseUrl = 'https://www.investing.com/commodities/metals';
-  }
-
-  // Parse metals data from HTML
-  parseMetalsData($) {
-    const metals = [];
-    
-    // Multiple selectors for different page layouts
-    const selectors = [
-      '#cross_rate_markets_stocks_1 tbody tr',
-      '.genTbl tbody tr', 
-      '[data-test="instrument-table"] tbody tr',
-      '.js-table-wrapper tbody tr',
-      'table tbody tr'
-    ];
-    
-    for (const selector of selectors) {
-      const rows = $(selector);
-      if (rows.length > 0) {
-        rows.each((index, element) => {
-          const row = $(element);
-          const cells = row.find('td');
-          
-          if (cells.length >= 7) {
-            const nameCell = cells.eq(1);
-            const name = nameCell.find('a').text().trim() || nameCell.text().trim();
-            
-            // Skip if no valid name
-            if (!name || name.length < 2) return;
-            
-            const metal = {
-              name: this.cleanMetalName(name),
-              symbol: this.extractSymbol(name),
-              last: this.parsePrice(cells.eq(2).text().trim()),
-              high: this.parsePrice(cells.eq(3).text().trim()),
-              low: this.parsePrice(cells.eq(4).text().trim()),
-              change: this.parsePrice(cells.eq(5).text().trim()),
-              changePercent: cells.eq(6).text().trim(),
-              time: cells.eq(7) ? cells.eq(7).text().trim() : new Date().toLocaleTimeString(),
-              timestamp: new Date().toISOString()
-            };
-            
-            // Validate the metal data
-            if (this.isValidMetal(metal)) {
-              metals.push(metal);
-            }
-          }
-        });
-        
-        if (metals.length > 0) break; // Found data with this selector
-      }
-    }
-    
-    return metals;
-  }
-
-  // Clean metal name
-  cleanMetalName(name) {
-    return name
-      .replace(/derived/gi, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  // Extract symbol from metal name
-  extractSymbol(name) {
-    const symbolMap = {
-      'Gold': 'XAU',
-      'Silver': 'XAG',
-      'Copper': 'HG',
-      'Platinum': 'XPT',
-      'Palladium': 'XPD',
-      'Aluminum': 'ALU',
-      'Aluminium': 'ALU',
-      'Nickel': 'NI',
-      'Lead': 'PB',
-      'Zinc': 'ZN',
-      'Tin': 'SN'
-    };
-    
-    for (const [metal, symbol] of Object.entries(symbolMap)) {
-      if (name.toLowerCase().includes(metal.toLowerCase())) {
-        return symbol;
-      }
-    }
-    
-    return name.substring(0, 3).toUpperCase();
-  }
-
-  // Parse price string to number
-  parsePrice(priceStr) {
-    if (!priceStr) return 0;
-    
-    // Remove currency symbols and commas
-    const cleaned = priceStr.replace(/[$,\s€£¥]/g, '');
-    const number = parseFloat(cleaned);
-    
-    return isNaN(number) ? 0 : number;
-  }
-
-  // Validate metal data
-  isValidMetal(metal) {
-    return metal.name && 
-           metal.last > 0 && 
-           !isNaN(metal.last) &&
-           metal.name.length > 1;
-  }
-
-  // Scrape metals data
-  async scrapeMetals() {
-    try {
-      console.log(`[${new Date().toISOString()}] Starting metals data scrape...`);
-      
-      const response = await axios.get(this.baseUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-          'Accept-Encoding': 'gzip, deflate',
-          'Connection': 'keep-alive'
-        },
-        timeout: 10000
-      });
-
-      const $ = cheerio.load(response.data);
-      const metals = this.parseMetalsData($);
-
-      if (metals.length === 0) {
-        throw new Error('No metals data found - page structure may have changed');
-      }
-
-      this.data = {
-        metals: metals,
-        lastUpdate: new Date().toISOString(),
-        totalCount: metals.length,
-        source: 'investing.com'
-      };
-
-      this.lastUpdate = new Date();
-      console.log(`[${new Date().toISOString()}] Successfully scraped ${metals.length} metals`);
-      
-      return this.data;
-
-    } catch (error) {
-      console.error(`[${new Date().toISOString()}] Scraping error:`, error.message);
-      throw error;
-    }
-  }
-
-  // Get current data
-  getData() {
-    return this.data;
-  }
-
-  // Get specific metal data
-  getMetal(symbol) {
-    if (!this.data || !this.data.metals) return null;
-    
-    return this.data.metals.find(metal => 
-      metal.symbol.toLowerCase() === symbol.toLowerCase() ||
-      metal.name.toLowerCase().includes(symbol.toLowerCase())
-    );
-  }
-
-  // Get data age in minutes
-  getDataAge() {
-    if (!this.lastUpdate) return Infinity;
-    return Math.floor((new Date() - this.lastUpdate) / (1000 * 60));
-  }
-
-  // Check if data is fresh (less than 35 minutes old)
-  isDataFresh() {
-    return this.getDataAge() < 35;
-  }
-
-  // Force update if data is stale
-  async ensureFreshData() {
-    if (!this.isDataFresh()) {
-      console.log('Data is stale, forcing update...');
-      await this.scrapeMetals();
-    }
-    return this.data;
-  }
-
-  // Start auto-update (call this in your app initialization)
-  startAutoUpdate() {
-    if (this.isRunning) return;
-    
-    this.isRunning = true;
-    console.log('Starting metals auto-update every 30 minutes...');
-
-    // Initial scrape
-    this.scrapeMetals().catch(error => {
-      console.error('Initial metals scrape failed:', error.message);
-    });
-
-    // Set interval for updates (30 minutes)
-    this.updateInterval = setInterval(async () => {
-      try {
-        await this.scrapeMetals();
-      } catch (error) {
-        console.error('Scheduled metals scrape failed:', error.message);
-      }
-    }, 30 * 60 * 1000); // 30 minutes
-  }
-
-  // Stop auto-update
-  stopAutoUpdate() {
-    if (this.updateInterval) {
-      clearInterval(this.updateInterval);
-      this.updateInterval = null;
-    }
-    this.isRunning = false;
-    console.log('Metals auto-update stopped');
-  }
-}
-
-// Export singleton instance
-const metalsScraper = new MetalsScraper();
-export default metalsScraper;
