@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   PieChart,
   Pie,
@@ -34,13 +34,60 @@ const COLORS = [
 
 export function DashboardOverview({ accounts, transactions }) {
   const [selectedAccountId, setSelectedAccountId] = useState(
-    accounts.find((a) => a.isDefault)?.id || accounts[0]?.id
+    accounts?.find((a) => a.isDefault)?.id || accounts?.[0]?.id
   );
+
+  // Add debug logging
+  useEffect(() => {
+    console.log("=== DASHBOARD DEBUG ===");
+    console.log("Accounts:", accounts);
+    console.log("Transactions:", transactions);
+    console.log("Selected Account ID:", selectedAccountId);
+    console.log("Accounts length:", accounts?.length || 0);
+    console.log("Transactions length:", transactions?.length || 0);
+  }, [accounts, transactions, selectedAccountId]);
+
+  // Safety check for accounts and transactions
+  if (!accounts || accounts.length === 0) {
+    return (
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-center text-muted-foreground">No accounts found</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-center text-muted-foreground">No accounts for charts</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!transactions) {
+    return (
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-center text-muted-foreground">Loading transactions...</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-center text-muted-foreground">Loading chart data...</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   // Filter transactions for selected account
   const accountTransactions = transactions.filter(
     (t) => t.accountId === selectedAccountId
   );
+
+  console.log("Account transactions:", accountTransactions);
 
   // Get recent transactions (last 5)
   const recentTransactions = accountTransactions
@@ -58,15 +105,19 @@ export function DashboardOverview({ accounts, transactions }) {
     );
   });
 
+  console.log("Current month expenses:", currentMonthExpenses);
+
   // Group expenses by category
   const expensesByCategory = currentMonthExpenses.reduce((acc, transaction) => {
-    const category = transaction.category;
+    const category = transaction.category || "Uncategorized";
     if (!acc[category]) {
       acc[category] = 0;
     }
     acc[category] += transaction.amount;
     return acc;
   }, {});
+
+  console.log("Expenses by category:", expensesByCategory);
 
   // Format data for pie chart
   const pieChartData = Object.entries(expensesByCategory).map(
@@ -75,6 +126,8 @@ export function DashboardOverview({ accounts, transactions }) {
       value: amount,
     })
   );
+
+  console.log("Pie chart data:", pieChartData);
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -153,9 +206,18 @@ export function DashboardOverview({ accounts, transactions }) {
         </CardHeader>
         <CardContent className="p-0 pb-5">
           {pieChartData.length === 0 ? (
-            <p className="text-center text-muted-foreground py-4">
-              No expenses this month
-            </p>
+            <div className="p-6">
+              <p className="text-center text-muted-foreground py-4">
+                No expenses this month
+              </p>
+              <div className="text-xs text-muted-foreground mt-2">
+                <p>Debug info:</p>
+                <p>• Total transactions: {transactions.length}</p>
+                <p>• Account transactions: {accountTransactions.length}</p>
+                <p>• Current month expenses: {currentMonthExpenses.length}</p>
+                <p>• Chart data entries: {pieChartData.length}</p>
+              </div>
+            </div>
           ) : (
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">

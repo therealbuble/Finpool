@@ -1,7 +1,11 @@
-
 "use client";
-import React, { useState, useRef, useEffect } from "react";
-import { Send, Bot, User, Mic, MicOff } from "lucide-react";
+
+import { useState, useEffect, useRef } from 'react';
+
+import { Send, Bot, User, Mic, MicOff, Menu, Plus } from "lucide-react";
+
+import useSWR from 'swr'
+
 
 export default function FinGuyClient({ initialAccounts, initialTransactions }) {
   const [messages, setMessages] = useState([
@@ -15,8 +19,13 @@ export default function FinGuyClient({ initialAccounts, initialTransactions }) {
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [listening, setListening] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [currentConversation, setCurrentConversation] = useState(null);
   const recognitionRef = useRef(null);
   const messagesEndRef = useRef(null);
+  
+  // Add a useRef for maintaining conversation history
+  const conversationHistoryRef = useRef([]);
 
   const userContext = {
     accounts: initialAccounts || [],
@@ -81,22 +90,62 @@ export default function FinGuyClient({ initialAccounts, initialTransactions }) {
     }
   }, [messages, mounted]);
 
+  // Function to generate title from first message
+  const generateTitle = (message) => {
+    return message.slice(0, 30) + (message.length > 30 ? '...' : '');
+  };
+
+  // Function to handle conversation selection
+  const handleSelectConversation = (conversation) => {
+    setMessages(conversation.messages);
+    setCurrentConversation(conversation);
+    setShowHistory(false);
+    conversationHistoryRef.current = conversation.messages.filter(
+      (msg) =>
+        !msg.text.includes("👋 Hi, I'm FinGuy!") &&
+        !msg.text.includes("I didn't receive a proper response") &&
+        !msg.text.includes("Connection error")
+    );
+  };
+
+  // Function to start new chat
+  const handleNewChat = () => {
+    setMessages([
+      {
+        role: "bot",
+        text:
+          "👋 Hi, I'm FinGuy! I'm here to help with all your financial questions - budgeting, investments, saving strategies, expense tracking, and more. What would you like to know?",
+      },
+    ]);
+    setCurrentConversation(null);
+    conversationHistoryRef.current = [];
+    setShowHistory(false);
+  };
+
+  // Modified sendMessage function to better handle conversation history and save conversations
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
 
     const userMessage = { role: "user", text: input };
     const currentInput = input;
-    const currentMessages = [...messages, userMessage];
-    setMessages(currentMessages);
+    
+    // Update messages state
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
     setInput("");
     setLoading(true);
 
     try {
-      const conversationHistory = currentMessages.filter(
+      // Create conversation history excluding welcome message and error messages
+      const conversationHistory = updatedMessages.filter(
         (msg) =>
-          msg.text !==
-          "👋 Hi, I'm FinGuy! I'm here to help with all your financial questions - budgeting, investments, saving strategies, expense tracking, and more. What would you like to know?"
+          !msg.text.includes("👋 Hi, I'm FinGuy!") &&
+          !msg.text.includes("I didn't receive a proper response") &&
+          !msg.text.includes("Connection error")
       );
+
+      // Store in ref for persistence
+      conversationHistoryRef.current = conversationHistory;
 
       const res = await fetch("/api/finguy", {
         method: "POST",
@@ -115,7 +164,52 @@ export default function FinGuyClient({ initialAccounts, initialTransactions }) {
       const data = await res.json();
 
       if (data.reply) {
-        setMessages((prev) => [...prev, { role: "bot", text: data.reply }]);
+        const botMessage = { role: "bot", text: data.reply };
+        setMessages((prev) => [...prev, botMessage]);
+        
+        // Update conversation history ref
+        conversationHistoryRef.current = [...conversationHistoryRef.current, botMessage];
+        
+        // Save conversation to database
+        const finalMessages = [...updatedMessages, botMessage];
+        
+        try {
+          // If this is a new conversation (first message)
+          if (!currentConversation) {
+            const title = generateTitle(currentInput);
+            const saveRes = await fetch('/api/conversations', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                title,
+                messages: finalMessages,
+              }),
+            });
+            
+            if (saveRes.ok) {
+              const { conversation } = await saveRes.json();
+              setCurrentConversation(conversation);
+            }
+          } else {
+            // Update existing conversation
+            const updateRes = await fetch('/api/conversations', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: currentConversation._id,
+                messages: finalMessages,
+              }),
+            });
+            
+            if (updateRes.ok) {
+              const { conversation } = await updateRes.json();
+              setCurrentConversation(conversation);
+            }
+          }
+        } catch (saveError) {
+          console.error("Failed to save conversation:", saveError);
+          // Continue without breaking the chat functionality
+        }
       } else {
         setMessages((prev) => [
           ...prev,
@@ -163,6 +257,15 @@ export default function FinGuyClient({ initialAccounts, initialTransactions }) {
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4">
+      {/* Chat History Sidebar */}
+      {showHistory && (
+        <ChatHistory
+          onSelectConversation={handleSelectConversation}
+          onClose={() => setShowHistory(false)}
+          currentConversationId={currentConversation?._id}
+        />
+      )}
+      
       <div className="max-w-4xl mx-auto">
         <div className="text-center mb-6">
           <h1 className="text-4xl font-bold text-red-700 mb-2">FinGuy Chat</h1>
@@ -177,6 +280,29 @@ export default function FinGuyClient({ initialAccounts, initialTransactions }) {
         </div>
 
         <div className="bg-white rounded-xl shadow-lg border border-slate-200 h-[600px] flex flex-col">
+          {/* Header with Menu and New Chat */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+            <button
+              onClick={() => setShowHistory(!showHistory)}
+              className="p-2 text-slate-500 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
+              title="Chat History"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            
+            <h2 className="text-lg font-semibold text-slate-800 truncate max-w-xs">
+              {currentConversation?.title || 'New Chat'}
+            </h2>
+            
+            <button
+              onClick={handleNewChat}
+              className="p-2 text-slate-500 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
+              title="New Chat"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
+          </div>
+
           {/* Messages Container */}
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
             {messages.map((msg, idx) => (

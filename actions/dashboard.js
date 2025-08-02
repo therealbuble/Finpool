@@ -1,9 +1,9 @@
 "use server";
 
 import aj from "@/lib/arcjet";
-import { db } from "@/lib/prisma";
+import { db } from "@/lib/db";
 import { request } from "@arcjet/next";
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
 
 const serializeTransaction = (obj) => {
@@ -21,12 +21,24 @@ export async function getUserAccounts() {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
 
-  const user = await db.user.findUnique({
+  // Try to find user in your DB first
+  let user = await db.user.findUnique({
     where: { clerkUserId: userId },
   });
 
+  // If not found, create the user from Clerk's session info
   if (!user) {
-    throw new Error("User not found");
+    // Fetch user info from Clerk
+    const clerkUser = await currentUser();
+    if (!clerkUser) throw new Error("Clerk user not found");
+    
+    user = await db.user.create({
+      data: {
+        clerkUserId: userId,
+        email: clerkUser.emailAddresses[0]?.emailAddress,
+        name: [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" "),
+      },
+    });
   }
 
   try {
@@ -44,7 +56,7 @@ export async function getUserAccounts() {
 
     // Serialize accounts before sending to client
     const serializedAccounts = accounts.map(serializeTransaction);
-console.log(serializedAccounts)
+    console.log(serializedAccounts);
 
     return serializedAccounts;
   } catch (error) {
@@ -83,12 +95,24 @@ export async function createAccount(data) {
       throw new Error("Request blocked");
     }
 
-    const user = await db.user.findUnique({
+    // Try to find user in your DB first
+    let user = await db.user.findUnique({
       where: { clerkUserId: userId },
     });
 
+    // If not found, create the user from Clerk's session info
     if (!user) {
-      throw new Error("User not found");
+      // Fetch user info from Clerk
+      const clerkUser = await currentUser();
+      if (!clerkUser) throw new Error("Clerk user not found");
+      
+      user = await db.user.create({
+        data: {
+          clerkUserId: userId,
+          email: clerkUser.emailAddresses[0]?.emailAddress,
+          name: [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" "),
+        },
+      });
     }
 
     // Convert balance to float before saving
@@ -139,12 +163,24 @@ export async function getDashboardData() {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
 
-  const user = await db.user.findUnique({
+  // Try to find user in your DB first
+  let user = await db.user.findUnique({
     where: { clerkUserId: userId },
   });
 
+  // If not found, create the user from Clerk's session info
   if (!user) {
-    throw new Error("User not found");
+    // Fetch user info from Clerk
+    const clerkUser = await currentUser();
+    if (!clerkUser) throw new Error("Clerk user not found");
+    
+    user = await db.user.create({
+      data: {
+        clerkUserId: userId,
+        email: clerkUser.emailAddresses[0]?.emailAddress,
+        name: [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" "),
+      },
+    });
   }
 
   // Get all user transactions
@@ -152,6 +188,7 @@ export async function getDashboardData() {
     where: { userId: user.id },
     orderBy: { date: "desc" },
   });
-console.log(transactions.map(serializeTransaction))
+  
+  console.log(transactions.map(serializeTransaction));
   return transactions.map(serializeTransaction);
 }

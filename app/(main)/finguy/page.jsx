@@ -10,9 +10,11 @@ export default async function FinGuyPage() {
 
   // Pass the data to the client component
   return (
-    <FinGuyClient 
-      initialAccounts={accounts} 
-      initialTransactions={transactions} 
-    />
+    <main className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 relative">
+      <FinGuyClient 
+        initialAccounts={accounts}
+        initialTransactions={transactions}
+      />
+    </main>
   );
 }
