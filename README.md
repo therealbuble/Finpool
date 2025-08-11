@@ -1,4 +1,4 @@
-# Full Stack AI Fianace Platform with Next JS, Supabase, Tailwind, Prisma, Inngest, ArcJet, Shadcn UI, Agentic AI
+# Full Stack AI Fianace Platform with Next JS, Supabase, Tailwind, Prisma, ArcJet, Shadcn UI, Agentic AI
 
 
 <img width="1470" alt="" src="">
@@ -18,7 +18,5 @@ NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/onboarding
 
 GEMINI_API_KEY=
 
-RESEND_API_KEY=
 
-ARCJET_KEY=
 ```
